@@ -1,0 +1,267 @@
+---
+title: "HAR.RMD"
+author: "Kamal Rautela"
+date: "January 11, 2017"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Summary
+----------------------------------------------------
+
+There was a research conducted on the quality of executing an activity during weight Lifting Excercise. For this research model and sensor approach was used. Under this apporach, data (WLE Dataset) was collected from 6 participants who were asked to perform barbell lifts correctly and incorrectly. In this project, I have taken that data and identified a prediction model that gives predictions with an accuracy of 95%. The prediction model selected was "Random Forest" (RF). The other two models that were tested were Linear Discriminant Analysis (LDA) and Regression Classification. These models provided prediction models with relatively lower accuracy as compared to Random Forest.
+
+
+Read and load the data. 
+------------------------------------------------------
+
+```{R}
+
+trainingData<-read.csv("./pml-training.csv",header=TRUE)
+testingData<-read.csv("./pml-testing.csv",header=TRUE)
+
+```
+
+
+Clean the data
+-------------------------------------------------------
+
+```{R}
+
+##Identify the variables which have less than 20% NA values and keep them
+
+nonNAcols<-colnames(trainingData)[colMeans(is.na(trainingData)) < .2]
+
+trainingData<-trainingData[,nonNAcols]
+
+##This left us with 93 variables
+
+##Identify the variables which have less than 20% empty values and keep them
+
+nonEmptycols<-colnames(trainingData)[colMeans(trainingData=="") < .2]
+
+trainingData<-trainingData[,nonEmptycols]
+
+##This left us with 60 variables
+
+##Identify the columsn which have near zero variance 
+## and remove them
+
+library(caret)
+trainingData<-trainingData[,-nearZeroVar(trainingData)]
+
+##This left us with 59 variables
+
+##The first 6 columns are row identifier, username, 3 time stamps columns and window number
+##These can be used a predictors so eliminate these as well
+
+trainingData<-trainingData[,-(1:6)]
+
+##This left us with 53 variables 
+```
+
+
+Create test data and validation data set partitions from training data
+------------------------------------------------------
+
+```{R}
+
+library(caret)
+
+set.seed(1)
+
+inTrain<-createDataPartition(y=trainingData$classe,p=.60,list=FALSE)
+
+training<-trainingData[inTrain,]
+testing<-trainingData [-inTrain,]
+
+
+```
+
+
+
+
+Explore the data / Exploratory Analysis
+----------------------------------------------
+
+Steps:
+
+1. Plots to identify any trends - too many variable to plot!
+2. Identify coorelated columns
+3. Identify preprocessing that may be required
+
+
+```{r}
+
+dim(training)
+
+M<-abs(cor(training[,-53]))
+diag(M)<-0
+length(which(M>.8,arr.ind=T))
+
+##This shows that there are 76 pairs of columns which are highly coorelated
+##Therefore it makes sense to use Principal Component Analysis in order to reduce variance
+##This will have a negative impact on bias but will help reduce variance in the prediction model
+
+```
+
+
+Build model 
+------------------------
+
+We can try to fit the following models:
+
+1. Classification trees
+2. Random Forest
+3. Linear Discriminant Analysis
+
+Before we train our models, we are going to define the following :
+
+1. metric - Since our outcome is a factor variable, we will choose "Accuracy"" as our criteria for model selection. We will measure Accurarcy with function - confustionMatrix function
+
+2. preProcess - Principal Component Analysis ("pca") where appropiate in order to reduce covariates in the favor of saving run time and/or reducing variance.  
+
+3. trainControl - We will use cross-validation in order to reduce bias where appropiate
+
+
+Model1 - Classification with tree
+----------------------------------
+
+```{R}
+
+set.seed(2)
+
+##Fit the model without preprocessing and cross-validation
+
+modelFitTree<- train(classe~.,data=training,method="rpart")
+                    
+finModTree<-modelFitTree$finalModel
+
+library(rattle)
+fancyRpartPlot(finModTree)
+
+## Find out of sample error rate
+
+confusionMatrix(predict(modelFitTree,newdata = testing),testing$classe)
+
+## This gives an accuracy of 49.96% which is not acceptable
+
+
+##Now lets try fitting the model with cross-validation to see if improve accuracy
+
+
+train.control <- trainControl (method="cv", number=4, allowParallel = TRUE)
+
+modelFitTree2<- train(classe~.,data=training,method="rpart",trControl=train.control)
+                    
+finModTree2<-modelFitTree2$finalModel
+
+print(finModTree2)
+
+## Find out of sample error rate
+
+confusionMatrix(predict(modelFitTree2,newdata = testing),testing$classe)
+
+```
+
+This gives an accuracy of 49.5% which is even worse (not acceptable again)
+
+
+Model2 - Random Forest
+----------------------------------
+
+```{R}
+
+gc()
+
+set.seed(1)
+
+preProc<-preProcess(training[,-53],method="pca", thresh=.8)
+
+trainPC<-predict(preProc,training[,-53])
+
+##preprocessing with PCA reduces covariates from 52 to 12
+library(dplyr)
+trainPC<-mutate(trainPC, classe=training$classe)
+
+train.control <- trainControl (method="cv", number=4, allowParallel = TRUE)
+
+modelFitRF <- train(classe ~ ., data=trainPC, method="rf", 
+                    trControl = train.control)
+                    
+finModRF<-modelFitRF$finalModel
+
+print(finModRF)
+
+## Find out of sample error rate
+
+testPC<- predict(preProc,testing[,-53])
+confusionMatrix(predict(modelFitRF,newdata = testPC),testing$classe)
+
+
+```
+
+This gives an accuracy of 95.09% which is pretty good.
+
+
+
+Model3 - Linear Discriminant Analysis
+---------------------------------------------
+
+```{R}
+
+gc()
+
+set.seed(3)
+
+train.control <- trainControl (method="cv", number=4, allowParallel = TRUE)
+
+modelFitLDA <- train(classe ~ ., data=training, method="lda")
+                    
+finModLDA<-modelFitLDA$finalModel
+
+print(finModLDA)
+
+## Find out of sample error rate
+
+confusionMatrix(predict(modelFitLDA,newdata = testing),testing$classe)
+
+
+
+```
+
+This gives an accuracy of 69.7% which is better than regression classification but not as good of Random Forest.
+
+
+Conclusion:
+-----------------------------
+
+Best prediction model is random forest which gives an accuracy of 95.09% . 
+
+
+Test Set Prediction
+--------------------------
+
+We will use random forest model with PCA for predicting "classe" variable for test set.
+
+```{r}
+
+testingDataPC<- predict(preProc,testingData[,-160])
+
+predictions<-predict(modelFitRF,newdata = testingDataPC)
+
+predictions
+
+```
+
+References:
+-------------------------------------------
+WLE Dataset:
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4VgcBgFsr
